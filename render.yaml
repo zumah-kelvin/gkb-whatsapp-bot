@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: gkb-whatsapp-bot
+    env: docker
+    plan: starter
+    disk:
+      name: wwebjs_auth
+      mountPath: /app/.wwebjs_auth
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: POSTING_CRON_SCHEDULE
+        value: 0 9 * * *
+      - key: POST_COUNT_PER_DAY
+        value: 5
+      - key: CONTACT_PHONE
+        value: 0552117787
+      - key: CEO_NAME
+        value: Zumah Kelvin
+      - key: SHOP_URL
+        value: https://gkb-shoping.netlify.app/
