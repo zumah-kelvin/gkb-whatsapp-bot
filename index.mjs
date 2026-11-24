@@ -215,24 +215,29 @@ function getBrowserExecutablePath() {
 const browserPath = getBrowserExecutablePath();
 addLog(`Browser executable: ${browserPath || 'Bundled Chromium'}`);
 
+const isWindows = process.platform === 'win32';
+const puppeteerArgs = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-accelerated-2d-canvas',
+  '--no-first-run',
+  '--disable-gpu',
+];
+if (!isWindows) {
+  puppeteerArgs.push('--no-zygote');
+}
+
 // Initialize WhatsApp Web Client
 const client = new Client({
   authStrategy: new LocalAuth({
     dataPath: process.env.AUTH_DATA_PATH || './.wwebjs_auth'
   }),
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
   puppeteer: {
     headless: true,
     ...(browserPath ? { executablePath: browserPath } : {}),
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu',
-      '--single-process'
-    ]
+    args: puppeteerArgs
   }
 });
 
