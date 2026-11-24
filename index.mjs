@@ -92,9 +92,49 @@ async function fetchFeaturedDevices(count = 5) {
       .select('*')
       .eq('active', true);
 
+    if (error) throw error;
+
     let items = (data && data.length > 0) ? data : FALLBACK_INVENTORY;
-    const shuffled = [...items].sort(() => 0.5 - Math.random());
-    return shuffled.slice(0, count);
+    
+    // Group by category to ensure balanced representation on WhatsApp status (phones, laptops, gadgets)
+    const laptops = items.filter(i => {
+      const cat = (i.category || '').toLowerCase();
+      return cat === 'laptops' || (!cat && (i.ram || i.storage));
+    });
+    const phones = items.filter(i => {
+      const cat = (i.category || '').toLowerCase();
+      const t = (i.title || '').toLowerCase();
+      return cat === 'phones' || t.includes('iphone') || t.includes('galaxy') || t.includes('camon') || t.includes('pro max');
+    });
+    const gadgets = items.filter(i => {
+      const cat = (i.category || '').toLowerCase();
+      return cat === 'gadgets' || (!laptops.includes(i) && !phones.includes(i));
+    });
+
+    const shuffle = arr => [...arr].sort(() => 0.5 - Math.random());
+    const sPhones = shuffle(phones);
+    const sLaptops = shuffle(laptops);
+    const sGadgets = shuffle(gadgets);
+
+    const interleaved = [];
+    const max = Math.max(sPhones.length, sLaptops.length, sGadgets.length, 3);
+    for (let i = 0; i < max; i++) {
+      if (sPhones[i]) interleaved.push(sPhones[i]);
+      if (sLaptops[i]) interleaved.push(sLaptops[i]);
+      if (sGadgets[i]) interleaved.push(sGadgets[i]);
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const item of (interleaved.length > 0 ? interleaved : shuffle(items))) {
+      if (!seen.has(item.id || item.title)) {
+        seen.add(item.id || item.title);
+        unique.push(item);
+      }
+      if (unique.length >= count) break;
+    }
+
+    return unique.length > 0 ? unique : shuffle(items).slice(0, count);
   } catch (err) {
     addLog(`Could not query Supabase, using fallback inventory: ${err.message}`);
     const shuffled = [...FALLBACK_INVENTORY].sort(() => 0.5 - Math.random());
@@ -105,23 +145,50 @@ async function fetchFeaturedDevices(count = 5) {
 function formatStatusCaption(device, index, total) {
   const brand = device.brand || 'GKB';
   const title = device.title || 'Tech Gadget';
-  const ram = device.ram ? `${device.ram} RAM · ` : '';
-  const storage = device.storage || '';
-  const price = device.price ? Number(device.price).toLocaleString() : 'Negotiable';
-  const highlights = device.highlights || 'Tested, high performance, fully functional.';
+  const category = (device.category || '').toLowerCase();
+  const isPhone = category.includes('phone') || title.toLowerCase().includes('iphone') || title.toLowerCase().includes('galaxy') || title.toLowerCase().includes('pro max');
+  const isGadget = category.includes('gadget') || (!isPhone && (title.toLowerCase().includes('drive') || title.toLowerCase().includes('stand') || title.toLowerCase().includes('mouse') || title.toLowerCase().includes('cable')));
+  
+  const icon = isPhone ? '📱' : isGadget ? '⚡' : '💻';
+  const categoryLabel = isPhone ? 'SMARTPHONE' : isGadget ? 'ELECTRONIC GADGET' : 'LAPTOP';
 
-  return [
-    `🔥 GKB FEATURED DEAL (${index}/${total}) 🔥`,
+  const ramPart = (!isPhone && device.ram && device.ram !== 'N/A') ? `${device.ram} RAM · ` : '';
+  const storagePart = (device.storage && device.storage !== 'None' && device.storage !== 'N/A') ? device.storage : '';
+  const specs = `${ramPart}${storagePart}`.trim();
+
+  const price = device.price ? Number(device.price).toLocaleString(undefined, { minimumFractionDigits: 2 }) : 'Negotiable';
+  
+  // Clean internal metadata brackets from highlights
+  const cleanHighlights = (device.highlights || '')
+    .replace(/\[Category:[^\]]*\]/gi, '')
+    .replace(/\[Type:[^\]]*\]/gi, '')
+    .replace(/\[Vendor:[^\]]*\]/gi, '')
+    .replace(/\[Phone:[^\]]*\]/gi, '')
+    .replace(/\[Spec\s*RAM:[^\]]*\]/gi, '')
+    .replace(/\[Spec\s*Storage:[^\]]*\]/gi, '')
+    .trim();
+
+  const lines = [
+    `🔥 GKB FEATURED ${categoryLabel} (${index}/${total}) 🔥`,
     '━━━━━━━━━━━━━━━━━━━━━━',
-    `💻 ${brand} ${title}`,
-    `⚡ Specs: ${ram}${storage}`.trim(),
-    `💰 Price: GHS ${price}`,
-    `✨ ${highlights}`,
-    '',
-    `🛒 Order online: ${SHOP_URL}`,
-    `📞 Call / WhatsApp: ${CONTACT_PHONE} (${CEO_NAME})`,
-    '⚡ GKB Technologies • Built Beyond Limits'
-  ].filter(line => line !== null).join('\n');
+    `${icon} ${brand} ${title}`,
+  ];
+
+  if (specs) {
+    lines.push(`⚡ Specs: ${specs}`);
+  }
+  lines.push(`💰 Price: GHS ${price}`);
+
+  if (cleanHighlights) {
+    lines.push(`✨ ${cleanHighlights.slice(0, 180)}`);
+  }
+
+  lines.push('');
+  lines.push(`🛒 Order online: ${SHOP_URL}`);
+  lines.push(`📞 Call / WhatsApp: ${CONTACT_PHONE} (${CEO_NAME})`);
+  lines.push('⚡ GKB Technologies • Nationwide Ghana Delivery');
+
+  return lines.join('\n');
 }
 
 function getBrowserExecutablePath() {
@@ -230,9 +297,23 @@ async function runDailyPosting() {
       addLog(`[${i + 1}/${devices.length}] Posting: ${device.brand} ${device.title}...`);
 
       let posted = false;
-      if (device.image_path && (device.image_path.startsWith('http://') || device.image_path.startsWith('https://'))) {
+      let imageUrl = null;
+      if (device.image_path) {
+        if (device.image_path.startsWith('http://') || device.image_path.startsWith('https://')) {
+          imageUrl = device.image_path;
+        } else {
+          try {
+            const { data } = supabase.storage.from('gkb-device-images').getPublicUrl(device.image_path);
+            imageUrl = data?.publicUrl || null;
+          } catch (storageErr) {
+            addLog(`Storage URL resolution error: ${storageErr.message}`);
+          }
+        }
+      }
+
+      if (imageUrl) {
         try {
-          const media = await MessageMedia.fromUrl(device.image_path);
+          const media = await MessageMedia.fromUrl(imageUrl);
           await client.sendMessage('status@broadcast', media, { caption });
           posted = true;
           addLog(`✅ [${i + 1}/${devices.length}] Posted photo + caption status!`);
