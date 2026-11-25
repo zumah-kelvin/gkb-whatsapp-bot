@@ -64,20 +64,6 @@ if (fs.existsSync(clientPath)) {
     );
   }
 
-  // Socket & Cmd safe require fallback
-  const socketCmdRegex = /const Socket = window\.require(?:\?\.)?\(['"]WAWebSocketModel['"]\)(?:\?\.)?\.Socket;\s*const Cmd = window\.require(?:\?\.)?\(['"]WAWebCmd['"]\)(?:\?\.)?\.Cmd;/;
-  if (socketCmdRegex.test(content)) {
-    content = content.replace(
-      socketCmdRegex,
-      `const getMod = (name) => { try { return window.require ? window.require(name) : null; } catch(e) { return null; } };\n                const Socket = getMod('WAWebSocketModel')?.Socket;\n                const Cmd = getMod('WAWebCmd')?.Cmd;\n                if (!Socket || !Cmd) return;`
-    );
-  }
-
-  // Safe obj.on and obj.off in listeners loop
-  content = content.replace(/obj\.off\(event,\s*handler\);/g, "if (obj && typeof obj.off === 'function') obj.off(event, handler);");
-  content = content.replace(/obj\.on\(event,\s*handler\);/g, "if (obj && typeof obj.on === 'function') obj.on(event, handler);");
-  content = content.replace(/Socket\.hasSynced/g, "Socket?.hasSynced");
-
   // Fix Invariant Violation #56356 during QR generation in Client.inject()
   const qrEvaluateRegex = /await this\.pupPage\.evaluate\(async \(\) => \{[\s\S]*?waSignalStore\.getRegistrationInfo\(\)[\s\S]*?\}\);\s*\}\s*\}\s*await exposeFunctionIfAbsent\(\s*this\.pupPage,\s*'onAuthAppStateChangedEvent'/;
   if (qrEvaluateRegex.test(content)) {
@@ -169,6 +155,122 @@ if (fs.existsSync(clientPath)) {
                 'onAuthAppStateChangedEvent'`;
 
     content = content.replace(qrEvaluateRegex, safeQrEvaluate);
+  }
+
+  // Robust listeners registration with polling & DOM chat detection
+  const listenersBlockRegex = /await exposeFunctionIfAbsent\(\s*this\.pupPage,\s*'onLogoutEvent'[\s\S]*?\);\s*await this\.pupPage\.evaluate\(\(\) => \{[\s\S]*?window\._wwjsListeners = listeners;[\s\S]*?\}\);\s*\}\s*catch\s*\(err\)\s*\{/;
+  if (listenersBlockRegex.test(content)) {
+    const safeListenersBlock = `await exposeFunctionIfAbsent(
+                this.pupPage,
+                'onLogoutEvent',
+                async () => {
+                    this.lastLoggedOut = true;
+                    await this.pupPage
+                        .waitForNavigation({ waitUntil: 'load', timeout: 5000 })
+                        .catch((_) => _);
+                },
+            );
+
+            await this.pupPage.evaluate(() => {
+                const getMod = (name) => {
+                    try { return window.require ? window.require(name) : null; } catch(e) { return null; }
+                };
+
+                const attachListeners = () => {
+                    const Socket = getMod('WAWebSocketModel')?.Socket;
+                    const Cmd = getMod('WAWebCmd')?.Cmd;
+                    if (!Socket || !Cmd) {
+                        // DOM Fallback: Check if user already scanned and reached chat list
+                        if (document.querySelector('#pane-side') || document.querySelector('[data-icon="chat"]')) {
+                            if (typeof window.onAppStateHasSyncedEvent === 'function') {
+                                window.onAppStateHasSyncedEvent();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+
+                    const listeners = [
+                        [
+                            Socket,
+                            'change:state',
+                            (_AppState, state) => {
+                                if (typeof window.onAuthAppStateChangedEvent === 'function') {
+                                    window.onAuthAppStateChangedEvent(state);
+                                }
+                            },
+                        ],
+                        [
+                            Socket,
+                            'change:hasSynced',
+                            () => {
+                                if (typeof window.onAppStateHasSyncedEvent === 'function') {
+                                    window.onAppStateHasSyncedEvent();
+                                }
+                            },
+                        ],
+                        [
+                            Cmd,
+                            'offline_progress_update_from_bridge',
+                            () => {
+                                try {
+                                    const progress = window.require('WAWebOfflineHandler').OfflineMessageHandler.getOfflineDeliveryProgress();
+                                    if (typeof window.onOfflineProgressUpdateEvent === 'function') {
+                                        window.onOfflineProgressUpdateEvent(progress);
+                                    }
+                                } catch (_) {}
+                            },
+                        ],
+                        [
+                            Cmd,
+                            'logout',
+                            async () => {
+                                if (typeof window.onLogoutEvent === 'function') {
+                                    await window.onLogoutEvent();
+                                }
+                            },
+                        ],
+                        [
+                            Cmd,
+                            'logout_from_bridge',
+                            async () => {
+                                if (typeof window.onLogoutEvent === 'function') {
+                                    await window.onLogoutEvent();
+                                }
+                            },
+                        ],
+                    ];
+
+                    if (window._wwjsListeners) {
+                        for (const [obj, event, handler] of window._wwjsListeners) {
+                            if (obj && typeof obj.off === 'function') obj.off(event, handler);
+                        }
+                    }
+
+                    for (const [obj, event, handler] of listeners) {
+                        if (obj && typeof obj.on === 'function') obj.on(event, handler);
+                    }
+                    window._wwjsListeners = listeners;
+
+                    const storeInjected = typeof window.WWebJS !== 'undefined';
+                    if (Socket?.hasSynced === true && !storeInjected) {
+                        if (typeof window.onAppStateHasSyncedEvent === 'function') {
+                            window.onAppStateHasSyncedEvent();
+                        }
+                    }
+                    return true;
+                };
+
+                if (!attachListeners()) {
+                    const attachInterval = setInterval(() => {
+                        if (attachListeners()) clearInterval(attachInterval);
+                    }, 500);
+                }
+            });
+        } catch (err) {`;
+
+    content = content.replace(listenersBlockRegex, safeListenersBlock);
+    console.log('✅ Patched whatsapp-web.js Client.js (Listeners polling & DOM sync attached)');
   }
 
   fs.writeFileSync(clientPath, content, 'utf8');
