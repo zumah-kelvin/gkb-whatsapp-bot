@@ -18,7 +18,8 @@ RUN apt-get update && apt-get install -y \
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     PORT=3000 \
-    NODE_ENV=production
+    NODE_ENV=production \
+    NODE_OPTIONS="--max-old-space-size=180"
 
 WORKDIR /app
 
@@ -35,5 +36,5 @@ RUN node patch.mjs
 # Expose web dashboard & health check port
 EXPOSE 3000
 
-# Start the bot
-CMD ["node", "index.mjs"]
+# Start the bot with low-memory constraints
+CMD ["node", "--max-old-space-size=180", "index.mjs"]
