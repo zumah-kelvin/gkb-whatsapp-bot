@@ -65,12 +65,18 @@ if (fs.existsSync(clientPath)) {
   }
 
   // Socket & Cmd safe require fallback
-  if (content.includes("const Socket = window.require('WAWebSocketModel').Socket;")) {
+  const socketCmdRegex = /const Socket = window\.require(?:\?\.)?\(['"]WAWebSocketModel['"]\)(?:\?\.)?\.Socket;\s*const Cmd = window\.require(?:\?\.)?\(['"]WAWebCmd['"]\)(?:\?\.)?\.Cmd;/;
+  if (socketCmdRegex.test(content)) {
     content = content.replace(
-      "const Socket = window.require('WAWebSocketModel').Socket;\n                const Cmd = window.require('WAWebCmd').Cmd;",
+      socketCmdRegex,
       `const getMod = (name) => { try { return window.require ? window.require(name) : null; } catch(e) { return null; } };\n                const Socket = getMod('WAWebSocketModel')?.Socket;\n                const Cmd = getMod('WAWebCmd')?.Cmd;\n                if (!Socket || !Cmd) return;`
     );
   }
+
+  // Safe obj.on and obj.off in listeners loop
+  content = content.replace(/obj\.off\(event,\s*handler\);/g, "if (obj && typeof obj.off === 'function') obj.off(event, handler);");
+  content = content.replace(/obj\.on\(event,\s*handler\);/g, "if (obj && typeof obj.on === 'function') obj.on(event, handler);");
+  content = content.replace(/Socket\.hasSynced/g, "Socket?.hasSynced");
 
   // Fix Invariant Violation #56356 during QR generation in Client.inject()
   const qrEvaluateRegex = /await this\.pupPage\.evaluate\(async \(\) => \{[\s\S]*?waSignalStore\.getRegistrationInfo\(\)[\s\S]*?\}\);\s*\}\s*\}\s*await exposeFunctionIfAbsent\(\s*this\.pupPage,\s*'onAuthAppStateChangedEvent'/;
@@ -163,9 +169,8 @@ if (fs.existsSync(clientPath)) {
                 'onAuthAppStateChangedEvent'`;
 
     content = content.replace(qrEvaluateRegex, safeQrEvaluate);
-    console.log('✅ Patched whatsapp-web.js Client.js (SignalStore & Invariant #56356 protected)');
   }
 
   fs.writeFileSync(clientPath, content, 'utf8');
-  console.log('✅ Patched whatsapp-web.js Client.js');
+  console.log('✅ Patched whatsapp-web.js Client.js (All guards applied)');
 }
