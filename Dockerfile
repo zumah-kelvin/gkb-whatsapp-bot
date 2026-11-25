@@ -19,7 +19,7 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     PORT=3000 \
     NODE_ENV=production \
-    NODE_OPTIONS="--max-old-space-size=180"
+    NODE_OPTIONS="--expose-gc --max-old-space-size=120"
 
 WORKDIR /app
 
@@ -37,4 +37,4 @@ RUN node patch.mjs
 EXPOSE 3000
 
 # Start the bot with low-memory constraints
-CMD ["node", "--max-old-space-size=180", "index.mjs"]
+CMD ["node", "--expose-gc", "--max-old-space-size=120", "index.mjs"]

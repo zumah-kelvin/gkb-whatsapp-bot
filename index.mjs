@@ -221,10 +221,16 @@ const puppeteerArgs = [
   '--disable-setuid-sandbox',
   '--disable-dev-shm-usage',
   '--disable-gpu',
-  '--disable-accelerated-2d-canvas',
+  '--disable-software-rasterizer',
+  '--single-process',
+  '--no-zygote',
   '--no-first-run',
   '--renderer-process-limit=1',
-  '--js-flags=--max-old-space-size=192',
+  '--js-flags=--max-old-space-size=128',
+  '--moderate-memory-pressure-hints',
+  '--disable-site-isolation-trials',
+  '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
+  '--disable-accelerated-2d-canvas',
   '--disable-extensions',
   '--disable-component-extensions-with-background-pages',
   '--disable-default-apps',
@@ -237,7 +243,6 @@ const puppeteerArgs = [
   '--disable-client-side-phishing-detection',
   '--disable-component-update',
   '--disable-domain-reliability',
-  '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
   '--disable-hang-monitor',
   '--disable-ipc-flooding-protection',
   '--disable-popup-blocking',
@@ -253,6 +258,13 @@ const puppeteerArgs = [
 if (!isWindows) {
   puppeteerArgs.push('--no-zygote');
 }
+
+// Periodic garbage collection to maintain low RAM footprint
+setInterval(() => {
+  if (global.gc) {
+    try { global.gc(); } catch {}
+  }
+}, 30000);
 
 // Initialize WhatsApp Web Client
 const client = new Client({
@@ -271,7 +283,7 @@ client.on('qr', async qr => {
   botStatus = 'waiting_for_qr';
   currentQrRaw = qr;
   try {
-    currentQrDataUrl = await QRCode.toDataURL(qr, { margin: 2, scale: 8 });
+    currentQrDataUrl = await QRCode.toDataURL(qr, { margin: 2, scale: 4 });
   } catch (err) {
     console.error('Failed to generate QR data URL:', err);
   }
@@ -461,6 +473,7 @@ const server = http.createServer(async (req, res) => {
       cronSchedule: CRON_SCHEDULE,
       lastPostTime,
       lastPostedItems,
+      memoryUsageMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
       recentLogs: lastPostLogs.slice(0, 20)
     }));
     return;
