@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Install Chromium and necessary system dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
@@ -22,11 +22,11 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 
 WORKDIR /app
 
-# Install dependencies first for Docker caching
+# Install dependencies without running postinstall until source is copied
 COPY package*.json ./
-RUN npm install --production
+RUN npm install --omit=dev --ignore-scripts
 
-# Copy application source
+# Copy application source (including patch.mjs)
 COPY . .
 
 # Run whatsapp-web.js patch script
