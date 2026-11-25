@@ -486,7 +486,12 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const { phone } = JSON.parse(body || '{}');
-        const cleanPhone = (phone || '').replace(/\D/g, '');
+        let cleanPhone = (phone || '').replace(/\D/g, '');
+        if (cleanPhone.startsWith('0') && cleanPhone.length === 10) {
+          cleanPhone = '233' + cleanPhone.substring(1);
+        } else if (cleanPhone.startsWith('2330') && cleanPhone.length === 13) {
+          cleanPhone = '233' + cleanPhone.substring(4);
+        }
         if (!cleanPhone || cleanPhone.length < 9) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Valid phone number with country code required (e.g. 233552117787)' }));
@@ -503,6 +508,58 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: err.message || 'Failed to request pairing code' }));
       }
     });
+    return;
+  }
+
+  // Cancel Pairing Code / Switch back to QR
+  if (url.pathname === '/api/cancel-pairing') {
+    try {
+      if (client && typeof client.cancelPairingCode === 'function') {
+        await client.cancelPairingCode();
+        addLog('🔄 Pairing code mode cancelled. Switched back to QR mode.');
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Diagnostic Screenshot API (to visually inspect WhatsApp Web page)
+  if (url.pathname === '/api/screenshot') {
+    try {
+      if (client && client.pupPage) {
+        const screenshot = await client.pupPage.screenshot({ type: 'png' });
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(screenshot);
+        return;
+      }
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('Browser page not available yet');
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Screenshot error: ' + err.message);
+    }
+    return;
+  }
+
+  // Reset Session API (re-initializes WhatsApp cleanly)
+  if (url.pathname === '/api/restart-client') {
+    try {
+      addLog('🔄 Restarting WhatsApp client...');
+      await client.destroy().catch(() => {});
+      botStatus = 'disconnected';
+      setTimeout(() => {
+        client.initialize().catch(err => addLog(`❌ Init error: ${err.message}`));
+      }, 1500);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Restarting WhatsApp client' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
