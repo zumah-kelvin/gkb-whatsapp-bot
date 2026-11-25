@@ -1,4 +1,4 @@
-FROM node:20-bullseye-slim
+FROM node:20-bookworm-slim
 
 # Install Chromium and necessary system dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
