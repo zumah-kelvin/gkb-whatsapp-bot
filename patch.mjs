@@ -1,8 +1,6 @@
 import fs from 'fs';
 import path from 'path';
 
-const botDir = path.resolve('.');
-
 // 1. Patch Utils.js
 const utilsPath = path.resolve('node_modules', 'whatsapp-web.js', 'src', 'util', 'Injected', 'Utils.js');
 if (fs.existsSync(utilsPath)) {
@@ -11,7 +9,7 @@ if (fs.existsSync(utilsPath)) {
   if (regex.test(content)) {
     const replacement = `cannotBeRanked: (() => {
                         try {
-                            const u = window.require('WAWebStatusGatingUtils');
+                            const u = window.require ? window.require('WAWebStatusGatingUtils') : null;
                             return typeof u?.canCheckStatusRankingPosterGating === 'function' ? u.canCheckStatusRankingPosterGating() : false;
                         } catch (e) {
                             return false;
@@ -48,7 +46,12 @@ const clientPath = path.resolve('node_modules', 'whatsapp-web.js', 'src', 'Clien
 if (fs.existsSync(clientPath)) {
   let content = fs.readFileSync(clientPath, 'utf8');
 
-  // Login page bypass
+  // Safe global replaces for Socket, Cmd, Conn
+  content = content.replace(/window\.require\(['"]WAWebSocketModel['"]\)\.Socket/g, "window.require?.('WAWebSocketModel')?.Socket");
+  content = content.replace(/window\.require\(['"]WAWebCmd['"]\)\.Cmd/g, "window.require?.('WAWebCmd')?.Cmd");
+  content = content.replace(/window\.require\(['"]WAWebConnModel['"]\)\.Conn/g, "window.require?.('WAWebConnModel')?.Conn");
+
+  // Login page bypass for waitForFunction
   if (!content.includes("this.pupPage.url().includes('/login')")) {
     content = content.replace(
       "const needAuthHandle = await this.pupPage.waitForFunction(",
@@ -60,7 +63,7 @@ if (fs.existsSync(clientPath)) {
     );
   }
 
-  // Socket & Cmd safe require
+  // Socket & Cmd safe require fallback
   if (content.includes("const Socket = window.require('WAWebSocketModel').Socket;")) {
     content = content.replace(
       "const Socket = window.require('WAWebSocketModel').Socket;\n                const Cmd = window.require('WAWebCmd').Cmd;",
