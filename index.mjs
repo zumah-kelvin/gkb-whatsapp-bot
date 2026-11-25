@@ -396,10 +396,32 @@ client.on('ready', async () => {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // Set CORS headers for all requests
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   // Health check endpoint for cloud hosts (Railway, Render, Fly.io, etc.)
   if (url.pathname === '/healthz' || url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', botStatus, lastPostTime }));
+    return;
+  }
+
+  // QR Code JSON API
+  if (url.pathname === '/api/qr') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: botStatus,
+      qrDataUrl: currentQrDataUrl,
+      rawQr: currentQrRaw
+    }));
     return;
   }
 
