@@ -50,6 +50,7 @@ if (fs.existsSync(clientPath)) {
   content = content.replace(/window\.require\(['"]WAWebSocketModel['"]\)\.Socket/g, "window.require?.('WAWebSocketModel')?.Socket");
   content = content.replace(/window\.require\(['"]WAWebCmd['"]\)\.Cmd/g, "window.require?.('WAWebCmd')?.Cmd");
   content = content.replace(/window\.require\(['"]WAWebConnModel['"]\)\.Conn/g, "window.require?.('WAWebConnModel')?.Conn");
+  content = content.replace(/window\.require\(['"]WAWebCmd['"]\)\.Cmd\.refreshQR\(\)/g, "window.require?.('WAWebCmd')?.Cmd?.refreshQR?.()");
 
   // Login page bypass for waitForFunction
   if (!content.includes("this.pupPage.url().includes('/login')")) {
@@ -69,6 +70,100 @@ if (fs.existsSync(clientPath)) {
       "const Socket = window.require('WAWebSocketModel').Socket;\n                const Cmd = window.require('WAWebCmd').Cmd;",
       `const getMod = (name) => { try { return window.require ? window.require(name) : null; } catch(e) { return null; } };\n                const Socket = getMod('WAWebSocketModel')?.Socket;\n                const Cmd = getMod('WAWebCmd')?.Cmd;\n                if (!Socket || !Cmd) return;`
     );
+  }
+
+  // Fix Invariant Violation #56356 during QR generation in Client.inject()
+  const qrEvaluateRegex = /await this\.pupPage\.evaluate\(async \(\) => \{[\s\S]*?waSignalStore\.getRegistrationInfo\(\)[\s\S]*?\}\);\s*\}\s*\}\s*await exposeFunctionIfAbsent\(\s*this\.pupPage,\s*'onAuthAppStateChangedEvent'/;
+  if (qrEvaluateRegex.test(content)) {
+    const safeQrEvaluate = `await this.pupPage.evaluate(async () => {
+                        const checkDomQr = () => {
+                            try {
+                                const el = document.querySelector('[data-ref]');
+                                if (el) {
+                                    const ref = el.getAttribute('data-ref');
+                                    if (ref && typeof window.onQRChangedEvent === 'function') {
+                                        window.onQRChangedEvent(ref);
+                                        return true;
+                                    }
+                                }
+                            } catch (_) {}
+                            return false;
+                        };
+
+                        if (checkDomQr()) {
+                            try {
+                                const observer = new MutationObserver(() => checkDomQr());
+                                observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['data-ref'] });
+                            } catch (_) {}
+                            return;
+                        }
+
+                        // Try internal signal store if possible, safely catching any invariant/assertion error
+                        try {
+                            const getMod = (name) => { try { return window.require ? window.require(name) : null; } catch(e) { return null; } };
+                            const signalStore = getMod('WAWebSignalStoreApi')?.waSignalStore;
+                            const userPrefs = getMod('WAWebUserPrefsInfoStore')?.waNoiseInfo;
+                            const base64 = getMod('WABase64');
+                            const userPrefsMD = getMod('WAWebUserPrefsMultiDevice');
+                            const regUtils = getMod('WAWebCompanionRegClientUtils');
+
+                            if (signalStore && userPrefs && base64 && userPrefsMD && regUtils) {
+                                const registrationInfo = await signalStore.getRegistrationInfo();
+                                const noiseKeyPair = await userPrefs.get();
+                                const staticKeyB64 = base64.encodeB64(noiseKeyPair.staticKeyPair.pubKey);
+                                const identityKeyB64 = base64.encodeB64(registrationInfo.identityKeyPair.pubKey);
+                                const advSecretKey = await userPrefsMD.getADVSecretKey();
+                                const platform = regUtils.DEVICE_PLATFORM;
+                                const getQR = (ref) =>
+                                    ref +
+                                    ',' +
+                                    staticKeyB64 +
+                                    ',' +
+                                    identityKeyB64 +
+                                    ',' +
+                                    advSecretKey +
+                                    ',' +
+                                    platform;
+
+                                const onRefChange = (_, ref) => {
+                                    if (ref == null) return;
+                                    if (typeof window.onQRChangedEvent === 'function') {
+                                        window.onQRChangedEvent(getQR(ref));
+                                    }
+                                };
+
+                                const conn = getMod('WAWebConnModel')?.Conn;
+                                if (conn) {
+                                    if (conn.ref && typeof window.onQRChangedEvent === 'function') {
+                                        window.onQRChangedEvent(getQR(conn.ref));
+                                    }
+                                    conn.on('change:ref', onRefChange);
+                                }
+                            }
+                        } catch (err) {
+                            console.warn('SignalStore QR bypassed:', err?.message || err);
+                        }
+
+                        // Fall back to polling DOM for [data-ref] QR code
+                        const poll = setInterval(() => {
+                            if (checkDomQr()) clearInterval(poll);
+                        }, 500);
+                        try {
+                            const observer = new MutationObserver(() => {
+                                if (checkDomQr()) observer.disconnect();
+                            });
+                            observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['data-ref'] });
+                        } catch (_) {}
+                    });
+                }
+            }
+
+            await exposeFunctionIfAbsent(
+                this.pupPage,
+                'onAuthAppStateChangedEvent'`;
+
+    content = content.replace(qrEvaluateRegex, safeQrEvaluate);
+    console.log('✅ Patched whatsapp-web.js Client.js (SignalStore & Invariant #56356 protected)');
   }
 
   fs.writeFileSync(clientPath, content, 'utf8');

@@ -431,6 +431,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Phone Number Pairing Code API
+  if (url.pathname === '/api/pairing-code' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { phone } = JSON.parse(body || '{}');
+        const cleanPhone = (phone || '').replace(/\D/g, '');
+        if (!cleanPhone || cleanPhone.length < 9) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Valid phone number with country code required (e.g. 233552117787)' }));
+          return;
+        }
+        addLog(`📲 Requesting pairing code for phone: ${cleanPhone}...`);
+        const code = await client.requestPairingCode(cleanPhone);
+        addLog(`✅ WhatsApp pairing code generated: ${code}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, code }));
+      } catch (err) {
+        addLog(`❌ Failed to get pairing code: ${err.message}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message || 'Failed to request pairing code' }));
+      }
+    });
+    return;
+  }
+
   // Web Dashboard UI
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   const html = `<!DOCTYPE html>
@@ -569,10 +596,20 @@ const server = http.createServer(async (req, res) => {
           Open WhatsApp on your phone &rarr; <strong>Settings / Linked Devices</strong> &rarr; tap <strong>Link a Device</strong> and scan this code:
         </p>
         <div class="qr-box">
-          ${currentQrDataUrl ? `<img src="${currentQrDataUrl}" alt="WhatsApp QR Code">` : '<p style="color:#000">Generating QR code…</p>'}
+          ${currentQrDataUrl ? `<img src="${currentQrDataUrl}" alt="WhatsApp QR Code">` : '<p style="color:#000;font-weight:600;">Generating QR code…</p>'}
         </div>
-        <p style="text-align:center;font-size:0.75rem;color:#64748b;">This page refreshes automatically until connected.</p>
-        <script>setTimeout(() => window.location.reload(), 4500);</script>
+        <p style="text-align:center;font-size:0.75rem;color:#64748b;margin-bottom:1.25rem;">QR code refreshes automatically.</p>
+
+        <div style="background:#070c17;border:1px solid #1a253c;border-radius:16px;padding:1.25rem;text-align:center;margin-bottom:1rem;">
+          <p style="font-size:0.875rem;font-weight:700;color:#f8fafc;margin-bottom:0.35rem;">Or Link with Phone Number (No Camera Needed)</p>
+          <p style="font-size:0.75rem;color:#94a3b8;margin-bottom:0.75rem;">Tap <em>"Link with phone number instead"</em> on WhatsApp and enter this 8-character code:</p>
+          <div style="display:flex;gap:8px;max-width:340px;margin:0 auto;">
+            <input id="phoneInput" type="tel" value="233552117787" placeholder="e.g. 233552117787" style="flex:1;padding:0.6rem 0.8rem;background:#0d1526;border:1px solid #1e293b;border-radius:10px;color:#fff;font-family:monospace;font-size:0.85rem;" />
+            <button id="getCodeBtn" class="btn" style="width:auto;margin:0;padding:0.6rem 1rem;font-size:0.8rem;" onclick="requestPhoneCode()">Get Code</button>
+          </div>
+          <div id="codeDisplay" style="display:none;margin-top:0.75rem;padding:0.6rem;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);border-radius:10px;font-family:monospace;font-size:1.35rem;font-weight:800;color:#34d399;letter-spacing:0.25em;"></div>
+        </div>
+        <script>setTimeout(() => { if (!window.hasRequestedCode) window.location.reload(); }, 6000);</script>
       `
         : `
         <div class="card">
@@ -610,6 +647,35 @@ const server = http.createServer(async (req, res) => {
   </div>
 
   <script>
+    async function requestPhoneCode() {
+      const phoneInput = document.getElementById('phoneInput');
+      const phone = phoneInput ? phoneInput.value.trim() : '';
+      const btn = document.getElementById('getCodeBtn');
+      const display = document.getElementById('codeDisplay');
+      if (!phone) { alert('Please enter phone number'); return; }
+      window.hasRequestedCode = true;
+      if (btn) { btn.disabled = true; btn.innerText = 'Getting…'; }
+      if (display) display.style.display = 'none';
+      try {
+        const res = await fetch('/api/pairing-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone })
+        });
+        const data = await res.json();
+        if (data.code && display) {
+          display.style.display = 'block';
+          display.innerText = data.code;
+        } else {
+          alert(data.error || 'Failed to generate pairing code.');
+        }
+      } catch(e) {
+        alert('Error: ' + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerText = 'Get Code'; }
+      }
+    }
+
     async function triggerPost() {
       const btn = document.getElementById('postBtn');
       if (btn) {
