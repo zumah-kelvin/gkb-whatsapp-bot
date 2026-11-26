@@ -222,15 +222,14 @@ const puppeteerArgs = [
   '--disable-dev-shm-usage',
   '--disable-gpu',
   '--disable-software-rasterizer',
-  '--single-process',
-  '--no-zygote',
+  '--disable-blink-features=AutomationControlled',
+  '--disable-accelerated-2d-canvas',
   '--no-first-run',
   '--renderer-process-limit=1',
-  '--js-flags=--max-old-space-size=128',
+  '--js-flags=--max-old-space-size=150',
   '--moderate-memory-pressure-hints',
   '--disable-site-isolation-trials',
   '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
-  '--disable-accelerated-2d-canvas',
   '--disable-extensions',
   '--disable-component-extensions-with-background-pages',
   '--disable-default-apps',
@@ -569,6 +568,31 @@ const server = http.createServer(async (req, res) => {
       }, 1500);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Restarting WhatsApp client' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Clear Session API (deletes .wwebjs_auth and reinitializes fresh)
+  if (url.pathname === '/api/clear-session') {
+    try {
+      addLog('🧹 Clearing WhatsApp auth session and restarting fresh...');
+      await client.destroy().catch(() => {});
+      botStatus = 'disconnected';
+      const authPath = process.env.AUTH_DATA_PATH || './.wwebjs_auth';
+      try {
+        fs.rmSync(authPath, { recursive: true, force: true });
+        addLog('🗑️ Deleted old auth directory.');
+      } catch (e) {
+        addLog(`⚠️ Could not delete auth dir: ${e.message}`);
+      }
+      setTimeout(() => {
+        client.initialize().catch(err => addLog(`❌ Init error: ${err.message}`));
+      }, 1500);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Cleared session and restarting client' }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
